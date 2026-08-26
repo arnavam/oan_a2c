@@ -377,8 +377,11 @@ def save_product(**kwargs):
 	"""
 	user = frappe.session.user
 	loan_product = kwargs["loan_product"]
-	if not frappe.db.exists("A2C Loan Product", loan_product):
+	product_status = frappe.db.get_value("A2C Loan Product", loan_product, "status")
+	if not product_status:
 		frappe.throw(_("Loan Product not found."), frappe.NotFoundError)
+	if product_status != "Active":
+		frappe.throw(_("Cannot save a product that is not Active."), frappe.ValidationError)
 
 	if frappe.db.exists("A2C Saved Product", {"user": user, "loan_product": loan_product}):
 		# Saving twice is the same outcome as saving once, so a double-tap is a
@@ -440,7 +443,7 @@ def get_saved_products(**kwargs):
 		# Archived, and loan_product_scope_query is what keeps it out of the result.
 		products = frappe.get_list(
 			"A2C Loan Product",
-			filters={"name": ["in", saved_docs]},
+			filters={"name": ["in", saved_docs], "status": "Active"},
 			fields=[
 				"name",
 				"product_name",
