@@ -35,10 +35,10 @@ class TestRestRouter(RequestContextMixin, unittest.TestCase):
 		frappe.set_user("Administrator")
 		frappe.db.rollback()
 
-	def test_all_94_routes_loaded(self):
-		"""Verify all 94 routes from openapi_v1.yaml are compiled in the URL Map."""
+	def test_all_routes_loaded(self):
+		"""Verify all 95 routes from openapi_v1.yaml are compiled in the URL Map."""
 		routes = get_routes_spec()
-		self.assertEqual(len(routes), 94, f"Expected 94 routes in spec, found {len(routes)}")
+		self.assertEqual(len(routes), 95, f"Expected 95 routes in spec, found {len(routes)}")
 
 	def test_expand_path_param_aliases(self):
 		"""Verify path variable alias expansion for controller kwargs."""
