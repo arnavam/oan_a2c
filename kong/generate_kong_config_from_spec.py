@@ -91,6 +91,17 @@ TIERS = {
 		"note": "Server-to-server receivers (OpenG2P, telco IVR). IP-allowlisted separately; "
 		"the cap here protects against a misbehaving upstream, not abuse.",
 	},
+	"static-assets": {
+		"limit_by": "ip",
+		"minute": 3000,
+		"hour": 100000,
+		"policy": "redis",
+		"note": "Public files (/files/*). IP-keyed of necessity: browsers do not send "
+		"Authorization on <img> subresource requests, so there is no consumer to key on. "
+		"Deliberately loose -- a single catalog page pulls ~40 images, and carrier-grade NAT "
+		"puts many users behind one address. Once a CDN fronts this path the origin sees only "
+		"cache misses and this can be tightened.",
+	},
 	"uploads": {
 		"limit_by": "consumer",
 		"minute": 10,
@@ -127,7 +138,11 @@ TIER_OVERRIDES = {
 	("PATCH", "/v1/banks/me"): "bank-partner-standard",
 	("PATCH", "/v1/banks/me/status"): "bank-partner-standard",
 	("POST", "/v1/banks/me/kyc-documents"): "uploads",
-	("POST", "/v1/banks/me/logo"): "uploads",
+	# Download is a read, not an upload: same tier as the other bank-partner reads,
+	# matching GET /v1/loan-applications/{id}/documents/{docId}/content, which sits on
+	# its own domain's read tier rather than "uploads".
+	("GET", "/v1/banks/me/kyc-documents"): "bank-partner-standard",
+	("POST", "/v1/images"): "uploads",
 	("PUT", "/v1/banks/me/contacts"): "bank-partner-standard",
 	("GET", "/v1/banks/me/team"): "bank-partner-standard",
 	("POST", "/v1/banks/me/team"): "bank-partner-standard",
@@ -250,6 +265,35 @@ def spec_routes(spec):
 				}
 			)
 	return routes
+
+
+# ---------------------------------------------------------------------------
+# Routes that are not API operations and therefore do not belong in the OpenAPI
+# spec: static public files served off the platform origin. They still need a
+# Kong route, because once the origin is firewalled to Kong's egress only (see
+# README section 6) any path without one becomes unreachable -- which would take
+# every bank logo and user avatar with it.
+#
+# These bypass reconcile() on purpose: the spec <-> TIER_OVERRIDES parity check
+# is about the API contract, and these are not part of it.
+# ---------------------------------------------------------------------------
+STATIC_ROUTES = [
+	{
+		"name": "static-public-files",
+		# Anchored at ^ so it cannot also match /private/files/*, which must never
+		# be served without the permission check Frappe applies to that path.
+		"regex": "~^/files/.+$",
+		"methods": ["GET", "HEAD"],
+		"auth": "public",
+		"domain": "d00",
+		"tier": "static-assets",
+		"regex_priority": 1,
+		# Public files are stored under opaque, unguessable, immutable keys, so a
+		# response can be cached indefinitely. Without a long max-age a CDN in front
+		# of this path would revalidate constantly and buy far less than it should.
+		"cache_control": "public, max-age=31536000, immutable",
+	}
+]
 
 
 def reconcile(routes):
@@ -385,6 +429,42 @@ def build_config(routes):
 
 		service["routes"].append(route)
 
+	for s in STATIC_ROUTES:
+		route = {
+			"name": s["name"],
+			"methods": s["methods"],
+			"paths": [s["regex"]],
+			"strip_path": False,
+			"regex_priority": s["regex_priority"],
+			"tags": ["a2c", "static", s["domain"], s["tier"], s["auth"]],
+			"plugins": [],
+		}
+		t = TIERS[s["tier"]]
+		route["plugins"].append(
+			{
+				"name": "rate-limiting",
+				"config": {
+					"minute": t["minute"],
+					"hour": t["hour"],
+					"limit_by": t["limit_by"],
+					"policy": t["policy"],
+					"fault_tolerant": True,
+					"hide_client_headers": False,
+				},
+			}
+		)
+		if s.get("cache_control"):
+			route["plugins"].append(
+				{
+					"name": "response-transformer",
+					"config": {"add": {"headers": [f"Cache-Control:{s['cache_control']}"]}},
+				}
+			)
+		# No auth plugin: browsers cannot send Authorization on <img> requests, so a
+		# JWT plugin here would reject every image. Public files are protected by
+		# unguessable keys, not by authentication -- see docs/file_storage_architecture.md.
+		service["routes"].append(route)
+
 	consumers = [
 		{
 			"username": "a2c-identity-platform",
@@ -446,7 +526,7 @@ def main():
 		by_method[r["method"]] = by_method.get(r["method"], 0) + 1
 	print(
 		f"wrote {OUTPUT_PATH.name}: {len(routes)} routes from {len(spec['paths'])} paths "
-		f"({len(spec['tags'])} domains) -- methods: {by_method}",
+		f"({len(spec['tags'])} domains) + {len(STATIC_ROUTES)} static -- methods: {by_method}",
 		file=sys.stderr,
 	)
 

@@ -10,7 +10,6 @@ from oan_a2c.api.utils import (
 )
 
 
-@frappe.whitelist(allow_guest=False)
 @handle_api_errors
 def lead_inbound(
 	phone_number: str | None = None,
@@ -32,8 +31,8 @@ def lead_inbound(
 	    If an active lead exists, we update it rather than duplicating.
 	  - Else: Create a fresh lead mapping phone_number and external_id.
 	"""
-	frappe.has_permission("A2C Lead", "create", throw=True)
-
+	# Telco webhook is a guest/machine-to-machine endpoint.
+	# Lead creation and updates run with ignore_permissions=True.
 	if not phone_number:
 		frappe.throw(_("phone_number is required"), frappe.MandatoryError)
 
@@ -73,7 +72,7 @@ def lead_inbound(
 	new_lead.lead_source = lead_source
 	new_lead.status = "Active"
 	new_lead.call_notes = _build_event_note(lead_source, external_ref_id, timestamp)
-	new_lead.insert(ignore_permissions=False)
+	new_lead.insert(ignore_permissions=True)
 
 	notify_lead_event(
 		new_lead.name,
@@ -97,7 +96,7 @@ def _update_existing_lead(lead_name, lead_source, external_ref_id, timestamp):
 	if external_ref_id and not existing_doc.external_id:
 		existing_doc.external_id = external_ref_id
 
-	existing_doc.save(ignore_permissions=False)
+	existing_doc.save(ignore_permissions=True)
 
 	notify_lead_event(
 		lead_name,

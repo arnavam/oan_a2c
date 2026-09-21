@@ -520,7 +520,6 @@ def validate_and_enqueue_consent(data, enforce_permission=True, sync=False, enqu
 	return consent_doc_name
 
 
-@frappe.whitelist(allow_guest=False)
 @validate_request(ReceiveConsentDataSchema)
 @handle_api_errors
 def receive_consent_data(**kwargs):

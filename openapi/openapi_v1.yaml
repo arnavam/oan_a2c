@@ -562,12 +562,42 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/UploadKycRequest'
-  /v1/banks/me/logo:
-    post:
-      summary: Upload the bank's logo
+    get:
+      summary: Download the bank's KYC document
       tags:
       - Bank Onboarding & Administration
-      operationId: post_v1_banks_me_logo
+      operationId: get_v1_banks_me_kyc-documents
+      x-legacy-rpc-method: oan_a2c.api.v1.seller.onboarding.download_kyc_document
+      parameters:
+      - name: view
+        in: query
+        required: false
+        schema:
+          type: integer
+          nullable: true
+        description: 1 to render inline; omit to download.
+      responses:
+        '200':
+          description: The raw file content.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '400': *id001
+        '401': *id002
+        '403': *id003
+        '404': *id004
+        '429': *id005
+        '500': *id006
+      security:
+      - BearerAuth: []
+  /v1/images:
+    post:
+      summary: Upload an image (bank logo or user avatar)
+      tags:
+      - Bank Onboarding & Administration
+      operationId: post_v1_images
       x-legacy-rpc-method: oan_a2c.api.v1.seller.onboarding.upload_image
       responses:
         '200':

@@ -469,13 +469,42 @@ services:
         key_claim_name: iss
         header_names:
         - Authorization
-  - name: post-v1-banks-me-logo
+  - name: get-v1-banks-me-kyc-documents
+    methods:
+    - GET
+    paths:
+    - ~/v1/banks/me/kyc-documents$
+    strip_path: false
+    regex_priority: 4
+    tags:
+    - a2c
+    - v1
+    - d02
+    - bank-partner-standard
+    - bearer
+    plugins:
+    - name: rate-limiting
+      config:
+        minute: 300
+        hour: 15000
+        limit_by: consumer
+        policy: redis
+        fault_tolerant: true
+        hide_client_headers: false
+    - name: jwt
+      config:
+        claims_to_verify:
+        - exp
+        key_claim_name: iss
+        header_names:
+        - Authorization
+  - name: post-v1-images
     methods:
     - POST
     paths:
-    - ~/v1/banks/me/logo$
+    - ~/v1/images$
     strip_path: false
-    regex_priority: 4
+    regex_priority: 2
     tags:
     - a2c
     - v1
@@ -2735,6 +2764,34 @@ services:
       config:
         allow:
         - 203.0.113.0/24
+  - name: static-public-files
+    methods:
+    - GET
+    - HEAD
+    paths:
+    - ~^/files/.+$
+    strip_path: false
+    regex_priority: 1
+    tags:
+    - a2c
+    - static
+    - d00
+    - static-assets
+    - public
+    plugins:
+    - name: rate-limiting
+      config:
+        minute: 3000
+        hour: 100000
+        limit_by: ip
+        policy: redis
+        fault_tolerant: true
+        hide_client_headers: false
+    - name: response-transformer
+      config:
+        add:
+          headers:
+          - Cache-Control:public, max-age=31536000, immutable
 consumers:
 - username: a2c-identity-platform
   tags:

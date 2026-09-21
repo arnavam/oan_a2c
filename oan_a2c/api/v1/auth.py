@@ -87,9 +87,7 @@ def create_user_account(
 	return user
 
 
-# nosemgrep: guest-whitelisted-method -- reviewed: public registration endpoint, role allowlisted + rate-limited
 @route("/register", allow_guest=True, summary="Register user")
-@frappe.whitelist(allow_guest=True)
 @validate_request(RegisterUserSchema)
 @handle_api_errors
 def register_user(

@@ -7,7 +7,7 @@ REST API Reference for Third-Party Integration
 Version 1.0 (Draft for stakeholder review) · September 2026
 Prepared by the A2C Architecture Team
 
-**94 endpoints across 10 resource domains**
+**95 endpoints across 10 resource domains**
 
 ---
 
@@ -143,20 +143,20 @@ Registration, login, token lifecycle, password recovery, and the caller's own pr
 
 Bank registration, KYC compliance, organizational profile, and team management. Every path here is scoped to the caller's own bank.
 
-| Method  | Endpoint                                    | Description                                                                   | Access                    |
-| ------- | ------------------------------------------- | ----------------------------------------------------------------------------- | ------------------------- |
-| `POST`  | `/v1/banks`                                 | Registers a new participating bank and links the caller as its administrator. | Bearer Token              |
-| `GET`   | `/v1/banks/me`                              | Returns the caller's bank profile.                                            | Bearer Token              |
-| `PATCH` | `/v1/banks/me`                              | Updates the bank's profile details.                                           | Bearer Token — Bank Admin |
-| `PATCH` | `/v1/banks/me/status`                       | Updates the bank's onboarding status (e.g., In Review → Active).              | Bearer Token — Bank Admin |
-| `POST`  | `/v1/banks/me/kyc-documents`                | Uploads the bank's regulatory KYC document.                                   | Bearer Token — Bank Admin |
-| `POST`  | `/v1/banks/me/logo`                         | Uploads the bank's marketplace logo image.                                    | Bearer Token — Bank Admin |
-| `PUT`   | `/v1/banks/me/contacts`                     | Sets the bank's Grievance Redressal Officer and Operations contact details.   | Bearer Token              |
-| `GET`   | `/v1/banks/me/team`                         | Lists all team members (admins and agents) at the bank.                       | Bearer Token — Bank Admin |
-| `POST`  | `/v1/banks/me/team`                         | Invites a new team member with a temporary password.                          | Bearer Token — Bank Admin |
-| `PATCH` | `/v1/banks/me/team/{userId}`                | Updates a team member's name, role, or active status.                         | Bearer Token — Bank Admin |
-| `POST`  | `/v1/banks/me/team/{userId}/password-reset` | Issues a new temporary password for a team member.                            | Bearer Token — Bank Admin |
-| `GET`   | `/v1/banks/me/dashboard/stats`              | Returns summary metrics for the bank's products and loan pipeline.            | Bearer Token              |
+| Method  | Endpoint                                    | Description                                                                   | Access                            |
+| ------- | ------------------------------------------- | ----------------------------------------------------------------------------- | --------------------------------- |
+| `POST`  | `/v1/banks`                                 | Registers a new participating bank and links the caller as its administrator. | Bearer Token                      |
+| `GET`   | `/v1/banks/me`                              | Returns the caller's bank profile.                                            | Bearer Token                      |
+| `PATCH` | `/v1/banks/me`                              | Updates the bank's profile details.                                           | Bearer Token — Bank Admin         |
+| `PATCH` | `/v1/banks/me/status`                       | Updates the bank's onboarding status (e.g., In Review → Active).              | Bearer Token — Bank Admin         |
+| `POST`  | `/v1/banks/me/kyc-documents`                | Uploads the bank's regulatory KYC document.                                   | Bearer Token — Bank Admin         |
+| `POST`  | `/v1/images`                                | Uploads a public image (bank logo or user avatar), returns its `file_url`.    | Bearer Token — any signed-in user |
+| `PUT`   | `/v1/banks/me/contacts`                     | Sets the bank's Grievance Redressal Officer and Operations contact details.   | Bearer Token                      |
+| `GET`   | `/v1/banks/me/team`                         | Lists all team members (admins and agents) at the bank.                       | Bearer Token — Bank Admin         |
+| `POST`  | `/v1/banks/me/team`                         | Invites a new team member with a temporary password.                          | Bearer Token — Bank Admin         |
+| `PATCH` | `/v1/banks/me/team/{userId}`                | Updates a team member's name, role, or active status.                         | Bearer Token — Bank Admin         |
+| `POST`  | `/v1/banks/me/team/{userId}/password-reset` | Issues a new temporary password for a team member.                            | Bearer Token — Bank Admin         |
+| `GET`   | `/v1/banks/me/dashboard/stats`              | Returns summary metrics for the bank's products and loan pipeline.            | Bearer Token                      |
 
 ---
 

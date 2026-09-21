@@ -1097,6 +1097,15 @@ QP["SupportingDocumentDownload"] = [
 		"description": "1 to render inline; omit to download.",
 	}
 ]
+QP["KycDocumentDownload"] = [
+	{
+		"name": "view",
+		"in": "query",
+		"required": False,
+		"schema": I(nullable=True),
+		"description": "1 to render inline; omit to download.",
+	}
+]
 QP["GetBasicProfile"] = [
 	{
 		"name": "include_consent_data",
@@ -1109,7 +1118,7 @@ QP["GetBasicProfile"] = [
 
 
 # ---------------------------------------------------------------------------
-# The 94 routes.
+# The 95 routes.
 # ---------------------------------------------------------------------------
 def R(
 	method,
@@ -1304,9 +1313,19 @@ ROUTES = [
 		legacy="oan_a2c.api.v1.seller.onboarding.upload_kyc_document",
 	),
 	R(
+		"get",
+		"/v1/banks/me/kyc-documents",
+		"Download the bank's KYC document",
+		"Bank Onboarding & Administration",
+		"bearer",
+		query="KycDocumentDownload",
+		legacy="oan_a2c.api.v1.seller.onboarding.download_kyc_document",
+		binary=True,
+	),
+	R(
 		"post",
-		"/v1/banks/me/logo",
-		"Upload the bank's logo",
+		"/v1/images",
+		"Upload an image (bank logo or user avatar)",
 		"Bank Onboarding & Administration",
 		"bearer",
 		"UploadImageRequest",
@@ -2099,7 +2118,7 @@ ROUTES = [
 		legacy="oan_a2c.api.v1.webhooks.lead_inbound",
 	),
 ]
-assert len(ROUTES) == 94, f"expected 94 routes, got {len(ROUTES)}"
+assert len(ROUTES) == 95, f"expected 95 routes, got {len(ROUTES)}"
 
 data(
 	"ConsentReasonListData",
@@ -2369,7 +2388,7 @@ print(
 )
 
 # ---------------------------------------------------------------------------
-# Public variant: same 94 routes, same schemas -- with the two internal-only
+# Public variant: same 95 routes, same schemas -- with the two internal-only
 # vendor extensions (x-legacy-rpc-method, x-schema-confidence) stripped, since
 # they leak Frappe implementation details a third-party partner has no need
 # of. Everything else (paths, verbs, request/response shapes, security,
@@ -2402,7 +2421,7 @@ public_doc["info"]["description"] = (
 
 with open(PUBLIC_SPEC_OUTPUT, "w") as f:
 	f.write("# A2C API -- OpenAPI 3.0.3 (PUBLIC / partner-facing contract)\n")
-	f.write("# Same 94 routes and schemas as openapi_v1.yaml, with internal-only vendor extensions\n")
+	f.write("# Same 95 routes and schemas as openapi_v1.yaml, with internal-only vendor extensions\n")
 	f.write(
 		"# (x-legacy-rpc-method, x-schema-confidence) removed. Generated from generate_openapi_spec.py.\n"
 	)

@@ -20,9 +20,8 @@ class TestAuthAPI(RequestContextMixin, unittest.TestCase):
 	Unit Tests for Identity and Access Management (IAM) endpoints.
 	Ensures strict adherence to our NSPF and No-Hack mandates.
 
-	Response shape note: @frappe.whitelist() envelopes the return value in
-	{"message": <return_value>} on the wire. These tests call the Python
-	functions directly, so they receive the inner dict — no outer "message" key.
+	Response shape note: Direct Python calls receive the returned dict directly
+	without any outer RPC wrapper.
 	"""
 
 	@classmethod
