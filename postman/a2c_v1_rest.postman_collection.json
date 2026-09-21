@@ -3782,6 +3782,11 @@
                 "method": "POST",
                 "header": [
                   {
+                    "key": "apikey",
+                    "value": "{{partner_api_key_telco}}",
+                    "description": "Kong key-auth (partner credential). Ignored when calling the origin directly."
+                  },
+                  {
                     "key": "Content-Type",
                     "value": "application/json"
                   },
@@ -4267,6 +4272,11 @@
               "request": {
                 "method": "POST",
                 "header": [
+                  {
+                    "key": "apikey",
+                    "value": "{{partner_api_key_consent}}",
+                    "description": "Kong key-auth (partner credential). Ignored when calling the origin directly."
+                  },
                   {
                     "key": "Content-Type",
                     "value": "application/json"

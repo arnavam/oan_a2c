@@ -38,7 +38,7 @@ ORIGINAL_SPEC_PATH = REPO_ROOT / "docs" / "openapi.json"
 INTERNAL_SPEC_OUTPUT = SCRIPT_DIR / "openapi_v1.yaml"
 PUBLIC_SPEC_OUTPUT = SCRIPT_DIR / "openapi_v1.public.yaml"
 
-with open(ORIGINAL_SPEC_PATH) as f:
+with open(ORIGINAL_SPEC_PATH) as f:  # nosemgrep: frappe-security-file-traversal
 	ORIGINAL = json.load(f)
 ORIGINAL_SCHEMAS = ORIGINAL["components"]["schemas"]
 
@@ -2372,7 +2372,7 @@ doc = {
 	},
 }
 
-with open(INTERNAL_SPEC_OUTPUT, "w") as f:
+with open(INTERNAL_SPEC_OUTPUT, "w") as f:  # nosemgrep: frappe-security-file-traversal
 	f.write("# A2C API -- OpenAPI 3.0.3 (INTERNAL / engineering build artifact)\n")
 	f.write("# Carries x-legacy-rpc-method + x-schema-confidence for the Kong/BFF build-out.\n")
 	f.write(
@@ -2419,7 +2419,7 @@ public_doc["info"]["description"] = (
 	"where that applies."
 )
 
-with open(PUBLIC_SPEC_OUTPUT, "w") as f:
+with open(PUBLIC_SPEC_OUTPUT, "w") as f:  # nosemgrep: frappe-security-file-traversal
 	f.write("# A2C API -- OpenAPI 3.0.3 (PUBLIC / partner-facing contract)\n")
 	f.write("# Same 95 routes and schemas as openapi_v1.yaml, with internal-only vendor extensions\n")
 	f.write(

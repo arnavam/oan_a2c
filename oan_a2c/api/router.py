@@ -124,6 +124,15 @@ def create_endpoint_wrapper(
 		if "oan_a2c" not in frappe.get_installed_apps():
 			raise NotFound()
 
+		# These rules dispatch through frappe.call, which does not apply the
+		# @frappe.whitelist guest gate -- so allow_guest has to be enforced here
+		# or it is only bookkeeping. For JWT routes the middleware has already
+		# rejected anonymous callers; this is the backstop for the routes it
+		# deliberately exempts (gateway-authenticated webhooks), where the only
+		# thing standing between Guest and the controller is this check.
+		if not allow_guest and frappe.session.user == "Guest":
+			raise frappe.AuthenticationError(frappe._("Authentication required"))
+
 		params = expand_path_param_aliases(path_args)
 		params.update(frappe.form_dict)
 		# frappe.call forwards every kwarg verbatim to a target taking **kwargs, which
@@ -268,10 +277,24 @@ def _register_spec_routes():
 		"/v1/auth/password/forgot",
 		"/v1/auth/password/reset",
 		"/v1/auth/password/initial",
+	):
+		guest_paths.add(g_path)
+
+	# Gateway-authenticated paths: not guest, but not JWT either.
+	#
+	# Kong rewrites the Authorization header on these routes to a Frappe API
+	# key/secret for a dedicated service user, which Frappe validates natively
+	# in validate_auth_via_api_keys() before auth_hooks run. So they must be
+	# exempt from the JWT middleware (it would reject a non-Bearer header)
+	# while still being closed to guests -- otherwise the credential enforces
+	# nothing and an anonymous caller that reaches the origin directly is
+	# accepted. The two gates want opposite answers here.
+	for gw_path in (
 		"/v1/webhooks/consent-data",
 		"/v1/webhooks/leads",
 	):
-		guest_paths.add(g_path)
+		_exempt_paths.add(gw_path)
+		_exempt_paths.add(f"/api{gw_path}")
 
 	for method, path, endpoint_str in routes:
 		try:

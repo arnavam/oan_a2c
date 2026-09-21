@@ -113,6 +113,76 @@ TIERS = {
 }
 
 # ---------------------------------------------------------------------------
+# Kong -> Frappe service credential (partner-key routes only).
+#
+# The partner authenticates to Kong with key-auth. Kong then authenticates
+# *itself* to Frappe by rewriting the Authorization header to a Frappe API
+# key/secret pair, which Frappe validates natively in
+# frappe.auth.validate_auth_via_api_keys() -- that runs before auth_hooks, so
+# frappe.session.user is already the service user by the time oan_a2c's JWT
+# middleware fires. Those paths stay in the middleware's exempt list, so the
+# two schemes do not collide.
+#
+# `remove` + `add`, NOT `replace`. This is the easy thing to get wrong: the
+# plugin's `replace` acts only on headers that are already present -- with no
+# Authorization from the partner (the normal case) it injects nothing and the
+# upstream sees an anonymous request. `add` alone is no good either: it will not
+# overwrite a header the partner did send, which would let a partner smuggle its
+# own Frappe credential through the gateway. Removing first and then adding is
+# both unconditional and authoritative. The plugin applies operations in the
+# order remove -> rename -> replace -> add -> append, so one plugin does it.
+#
+# `apikey` is removed for a different reason: so the upstream never sees the
+# partner's own credential (key-auth's hide_credentials covers only the
+# credential it actually consumed).
+#
+# The value is a decK template reference, not a literal: `deck sync` resolves
+# ${{ env "DECK_..." }} from the environment at apply time, so the real
+# credential lives in the secrets manager and never enters this repo or the
+# generated kong.yml. Both vars must be exported in the CI/deploy environment.
+#
+# The credential belongs to a dedicated, login-disabled Frappe service user.
+# Provision TWO of them and alternate on rotation: Frappe stores a single
+# api_secret per User, so regenerating in place is a hard cutover with no
+# overlap window.
+# ---------------------------------------------------------------------------
+# Source IPs allowed to reach the inbound webhook routes, on top of key-auth.
+#
+# CURRENTLY DEV-PERMISSIVE: loopback plus the RFC1918 private ranges. Kong matches
+# on the peer address it actually sees, and in Docker a call from the host arrives
+# from the bridge network (172.16.0.0/12 via host.docker.internal), not 127.0.0.1 --
+# so loopback alone would 403 a request carrying a perfectly good apikey. These
+# ranges mirror what the running local gateway was already configured with.
+#
+# NOT a production allowlist. Before this fronts live traffic, narrow it to the
+# partners' real egress CIDRs (OpenG2P, the telco IVR gateway); 10/8 and 172.16/12
+# in production admit anything that reaches Kong from inside the cluster network,
+# which defeats the point of having the plugin on these routes at all.
+WEBHOOK_ALLOWED_CIDRS = [
+	"127.0.0.1/32",
+	"::1/128",
+	"10.0.0.0/8",
+	"172.16.0.0/12",
+	"192.168.0.0/16",
+]
+
+FRAPPE_SERVICE_CREDENTIAL = (
+	'token ${{ env "DECK_FRAPPE_WEBHOOK_API_KEY" }}:${{ env "DECK_FRAPPE_WEBHOOK_API_SECRET" }}'
+)
+
+
+def frappe_service_credential_plugin():
+	"""Fresh dict per call -- route plugin lists must not share mutable state."""
+	return {
+		"name": "request-transformer",
+		"config": {
+			"remove": {"headers": ["apikey", "Authorization"]},
+			"add": {"headers": [f"Authorization:{FRAPPE_SERVICE_CREDENTIAL}"]},
+		},
+	}
+
+
+# ---------------------------------------------------------------------------
 # Tier assignment per route -- the one thing the OpenAPI spec doesn't carry.
 # Keyed by (METHOD, PATH) exactly as openapi_v1.public.yaml spells them.
 # Carried over unchanged from the original hand-built ROUTES table so the
@@ -232,7 +302,7 @@ TIER_OVERRIDES = {
 
 
 def load_spec(path):
-	with open(path) as f:
+	with open(path) as f:  # nosemgrep: frappe-security-file-traversal
 		return yaml.safe_load(f)
 
 
@@ -422,9 +492,12 @@ def build_config(routes):
 			route["plugins"].append(
 				{"name": "key-auth", "config": {"key_names": ["apikey"], "hide_credentials": True}}
 			)
+			# list() copy per route: sharing one list object makes PyYAML emit a
+			# YAML anchor/alias pair instead of two literal blocks.
 			route["plugins"].append(
-				{"name": "ip-restriction", "config": {"allow": ["203.0.113.0/24"]}}
-			)  # placeholder CIDR
+				{"name": "ip-restriction", "config": {"allow": list(WEBHOOK_ALLOWED_CIDRS)}}
+			)
+			route["plugins"].append(frappe_service_credential_plugin())
 		# auth == "public": no auth plugin attached; rate-limiting (IP-keyed) still applies
 
 		service["routes"].append(route)
@@ -514,12 +587,16 @@ def main():
 	routes = reconcile(spec_routes(spec))
 	doc = build_config(routes)
 
-	with open(OUTPUT_PATH, "w") as f:
+	with open(OUTPUT_PATH, "w") as f:  # nosemgrep: frappe-security-file-traversal
 		f.write("# A2C Kong declarative config -- generated from openapi_v1.public.yaml\n")
 		f.write(f"# Source spec: {spec['info']['title']} v{spec['info']['version']}\n")
 		f.write("# Generated by generate_kong_config_from_spec.py -- do not hand-edit; change the spec\n")
 		f.write("# and/or TIER_OVERRIDES in the generator, then re-run.\n")
-		yaml.safe_dump(doc, f, sort_keys=False, default_flow_style=False, width=100)
+		# width=200: the decK template references (${{ env "..." }}) are long enough
+		# that the default wrap splits them mid-expression. YAML rejoins a folded
+		# plain scalar with a space, which Go templates tolerate -- but a secret
+		# reference broken across lines is not something to leave to tolerance.
+		yaml.safe_dump(doc, f, sort_keys=False, default_flow_style=False, width=200)
 
 	by_method = {}
 	for r in routes:

@@ -31,13 +31,27 @@ deck sync -s kong.yml --kong-addr https://kong-admin.internal:8001
 
 Re-run the generator whenever `openapi_v1.public.yaml` changes. If it adds a route with no assigned tier, the generator stops and tells you which one — add it to `TIER_OVERRIDES` first. Don't hand-edit `kong.yml` directly; it's a build artifact.
 
-## 3. Authentication: two schemes, one boundary to understand
+## 3. Authentication: three schemes, one boundary to understand
 
 **Bearer (JWT), for every end-user route.** Kong's `jwt` plugin validates against **one** Consumer (`a2c-identity-platform`) holding the RSA public key that matches the platform's own JWT signing key — every end user's token validates against that single registered issuer, not a Kong Consumer per user. Kong checks **signature and expiry only**.
 
 That's the boundary to get right: **fine-grained authorization stays in the platform**, not the gateway. Kong won't (and shouldn't) know that one role can read a resource but not create it, or that a particular status transition needs a non-empty reason. Pushing that into the gateway means duplicating authorization rules in two places that will drift — Kong's job is just to reject anything without a validly-signed, unexpired token before it costs the platform a database round-trip.
 
-**Partner API key, for the two inbound webhooks.** The consent-data and lead-inbound receivers get their own Kong Consumers (`openg2p-consent-webhook`, `telco-ivr-lead-gateway`) with `key-auth` credentials, **not** JWT — that's what they actually authenticate with (`Authorization: token <key>:<secret>`). Both routes also carry `ip-restriction`, since these are known, fixed server-to-server callers — allowlist their egress CIDRs rather than leaving the credential as the only control.
+**Partner API key, for the two inbound webhooks.** The consent-data and lead-inbound receivers get their own Kong Consumers (`openg2p-consent-webhook`, `telco-ivr-lead-gateway`) with `key-auth` credentials, **not** JWT. The partner sends its credential in an `apikey` header; `hide_credentials: true` keeps it from reaching the upstream. Both routes also carry `ip-restriction`, since these are known, fixed server-to-server callers — allowlist their egress CIDRs rather than leaving the credential as the only control.
+
+**Frappe API key/secret, for the Kong → platform leg of those same two routes.** Partner authentication ends at Kong; the hop from Kong to the platform is authenticated separately. A `request-transformer` plugin on both webhook routes rewrites `Authorization` to `token <api_key>:<api_secret>` for a dedicated Frappe service user, which Frappe validates natively in `frappe.auth.validate_auth_via_api_keys()`. That runs _before_ `auth_hooks`, so `frappe.session.user` is already the service user when the platform's JWT middleware fires — and since both paths are in that middleware's exempt list, the two schemes never collide. The webhook handlers gain a real session user in their audit trail instead of running as Guest.
+
+Three things this depends on:
+
+- **`remove` + `add`, not `replace`.** This is the easy thing to get wrong. The plugin's `replace` acts _only_ on headers already present, so with no `Authorization` from the partner — the normal case — it injects nothing and the upstream sees an anonymous request. `add` alone won't overwrite a header the partner _did_ send, which would let a partner smuggle its own Frappe credential through. Removing first, then adding, is both unconditional and authoritative; the plugin applies operations in the order remove → rename → replace → add → append, so one plugin covers it. The partner's `apikey` header is removed too, so the upstream never sees it.
+- **The routes must stop being guest routes in the platform.** A credential Kong supplies enforces nothing if the origin still accepts anonymous callers that reach it directly. See §6.
+- **The secret is never committed.** `kong.yml` carries a decK template reference (`${{ env "DECK_FRAPPE_WEBHOOK_API_KEY" }}`), resolved from the environment at `deck sync` time. Export `DECK_FRAPPE_WEBHOOK_API_KEY` and `DECK_FRAPPE_WEBHOOK_API_SECRET` in the deploy environment from your secrets manager.
+
+**`key-auth` is not scoped per route.** Kong validates an `apikey` against _every_ consumer that holds one, so `telco-ivr-lead-gateway`'s key opens `/v1/webhooks/consent-data` just as well as its own route, and vice versa — verified against a running gateway. Splitting the two partners into separate consumers buys attribution and independent rotation, not isolation. If a partner must be confined to its own route, add the `acl` plugin: tag each consumer into a group and set `config.allow` to that group on the route. Worth doing before either credential leaves your hands.
+
+Provisioning the service user: create it login-disabled, generate API keys on it, and give it a role with **write DocPerm on `A2C Consent Request`** — `receive_consent_data` calls through with `enforce_permission=True`, so an under-privileged service user fails there rather than at the gateway. `lead_inbound` writes with `ignore_permissions=True` and needs no DocPerm of its own. Grant nothing beyond those two; this identity is reachable from partner traffic.
+
+A Frappe API secret is a full session credential, not a webhook-scoped one — treat a leak as account compromise. Frappe stores exactly one `api_secret` per User, so regenerating in place is a hard cutover with no overlap window: provision **two** login-disabled service users and alternate between them on rotation, swapping the env var and retiring the old one after `deck sync` lands. Terminate TLS on this leg too; the credential is static and replayable on its own.
 
 ## 4. Throttling tiers
 
@@ -108,6 +122,8 @@ Two things have to both be true before this is actually enforced, not just publi
 1. The platform's public ingress is firewalled to accept traffic **only** from Kong's egress IPs — verified with a `curl` from outside that network, not assumed.
 2. The old endpoints return `404`/`403` at the network edge — undocumented-but-reachable is not the same as closed.
 
+The webhook routes have a second, narrower version of the same problem. They used to be registered as guest routes in the platform (`router.py::_register_spec_routes`), which meant the gateway's `key-auth` was the _only_ thing in front of them. They are now non-guest: the service credential Kong injects (§3) is what gets them past `create_endpoint_wrapper`'s Guest check, so a request arriving without it — from a partner who found the origin, or from anywhere else bypassing Kong — is rejected with `401` regardless of what the firewall rules happen to be that week. They stay exempt from the JWT middleware, since the credential they carry is a Frappe API key rather than a Bearer token; the two gates deliberately want opposite answers on these paths.
+
 Sequence the rollout in three phases: (1) stand up Kong, mirror or parallel-run traffic against a subset of low-risk read routes; (2) migrate partners to `/v1/*` with the old paths still open as a monitored fallback; (3) close the old paths once telemetry shows zero traffic on them for an agreed window. Skipping the monitoring window in (2) is how a still-integrating partner gets a silent outage instead of a deprecation notice.
 
 ## 7. Observability
@@ -117,7 +133,7 @@ Sequence the rollout in three phases: (1) stand up Kong, mirror or parallel-run 
 ## 8. Files in this delivery
 
 - `generate_kong_config_from_spec.py` — generator. Reads `../openapi/openapi_v1.public.yaml` for paths/methods/auth, applies `TIER_OVERRIDES` for throttling, writes `kong.yml`. Re-run on every spec change.
-- `kong.yml` — generated declarative config (95 API routes + 1 static-file route, 1 service, 4 example consumers). Placeholders to fill in before applying: the upstream URL, the JWT issuer's RSA public key, webhook partner API keys, and the `ip-restriction` CIDR blocks.
+- `kong.yml` — generated declarative config (95 API routes + 1 static-file route, 1 service, 4 example consumers). Placeholders to fill in before applying: the upstream URL, the JWT issuer's RSA public key, webhook partner API keys, and the `ip-restriction` CIDR blocks. The Kong → platform service credential is _not_ a placeholder — it resolves from `DECK_FRAPPE_WEBHOOK_API_KEY` / `DECK_FRAPPE_WEBHOOK_API_SECRET` at `deck sync` time and must be exported in the deploy environment.
 - `generate_kong_config.py` — earlier hand-maintained-table generator, kept for reference only. Superseded by `generate_kong_config_from_spec.py` — don't use it for a `kong.yml` you intend to apply.
 - This README.
 

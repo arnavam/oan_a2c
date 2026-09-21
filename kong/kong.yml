@@ -2645,7 +2645,20 @@ services:
     - name: ip-restriction
       config:
         allow:
-        - 203.0.113.0/24
+        - 127.0.0.1/32
+        - ::1/128
+        - 10.0.0.0/8
+        - 172.16.0.0/12
+        - 192.168.0.0/16
+    - name: request-transformer
+      config:
+        remove:
+          headers:
+          - apikey
+          - Authorization
+        add:
+          headers:
+          - Authorization:token ${{ env "DECK_FRAPPE_WEBHOOK_API_KEY" }}:${{ env "DECK_FRAPPE_WEBHOOK_API_SECRET" }}
   - name: get-v1-notifications
     methods:
     - GET
@@ -2763,7 +2776,20 @@ services:
     - name: ip-restriction
       config:
         allow:
-        - 203.0.113.0/24
+        - 127.0.0.1/32
+        - ::1/128
+        - 10.0.0.0/8
+        - 172.16.0.0/12
+        - 192.168.0.0/16
+    - name: request-transformer
+      config:
+        remove:
+          headers:
+          - apikey
+          - Authorization
+        add:
+          headers:
+          - Authorization:token ${{ env "DECK_FRAPPE_WEBHOOK_API_KEY" }}:${{ env "DECK_FRAPPE_WEBHOOK_API_SECRET" }}
   - name: static-public-files
     methods:
     - GET

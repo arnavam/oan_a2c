@@ -20,9 +20,18 @@ def lead_inbound(
 	"""
 	Automated lead intake from external telco systems (IVR / missed call gateways).
 
-	Authentication: standard Frappe token auth (Authorization: token <key>:<secret>).
-	The JWT middleware in oan_a2c.api.middleware skips non-JWT endpoints automatically
-	because this endpoint uses Frappe's native API key/secret scheme — no Bearer token needed.
+	Authentication: two hops, neither of them JWT.
+
+	The partner authenticates to Kong with a `key-auth` credential. Kong then
+	rewrites the Authorization header to a Frappe API key/secret for a dedicated
+	service user (`Authorization: token <key>:<secret>`), which Frappe validates
+	in validate_auth_via_api_keys() before auth_hooks run — so this route is in
+	the JWT middleware's exempt list, and frappe.session.user is the service user
+	rather than Guest by the time we get here.
+
+	The route is deliberately *not* registered as a guest route: without that
+	credential the request is rejected before reaching this function, so a caller
+	who bypasses Kong and hits the origin directly gets a 401 rather than a lead.
 
 	Idempotency contract (spec §4.4):
 	  - Primary Check: By External Reference ID. If a lead already exists with this
