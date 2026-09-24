@@ -30,6 +30,9 @@ from oan_a2c.api.utils import (
 from oan_a2c.api.v1.auth import create_user_account
 
 bank_route = prefixed("/api/v1/banks")
+# Not bank-scoped: upload_image is the platform's generic public-image endpoint
+# (bank logos and user avatars both go through it), so it sits at /v1/images.
+api_route = prefixed("/api/v1")
 
 ROLE_LEVELS: dict[str, int] = {
 	ADMIN_ROLE: 1,
@@ -122,6 +125,10 @@ class UploadKycSchema(BaseModel):
 	filename: str = Field(..., min_length=4, max_length=255, pattern=r"^.+\.pdf$")
 	# Max length approx 15MB for base64
 	filedata: str = Field(..., min_length=10, max_length=15000000)
+
+
+class DownloadKycSchema(BaseModel):
+	view: int | None = None
 
 
 class UploadImageSchema(BaseModel):
@@ -219,7 +226,6 @@ def normalize_tin(tin: str) -> str:
 	return re.sub(r"[^A-Z0-9]", "", str(tin).upper())
 
 
-@frappe.whitelist()
 @validate_request(RegisterBankSchema)
 @handle_api_errors
 def register_bank(**kwargs):
@@ -305,7 +311,6 @@ def register_bank(**kwargs):
 # 3. save_org_contacts
 # -----------------
 @bank_route("/me/contacts", methods=("PUT",), summary="Save bank contacts")
-@frappe.whitelist()
 @validate_request(SaveOrgContactsSchema)
 @handle_api_errors
 def save_org_contacts(**kwargs):
@@ -333,7 +338,6 @@ def save_org_contacts(**kwargs):
 # 3b. upload_kyc_document
 # -----------------
 @bank_route("/me/kyc-documents", methods=("POST",), summary="Upload KYC document")
-@frappe.whitelist()
 @validate_request(UploadKycSchema)
 @handle_api_errors
 @require_bank_role(BANK_ADMIN_ROLE)
@@ -381,22 +385,89 @@ def upload_kyc_document(**kwargs):
 
 
 # -----------------
+# 3b-ii. download_kyc_document
+# -----------------
+@bank_route("/me/kyc-documents", methods=("GET",), summary="Download KYC document")
+@validate_request(DownloadKycSchema)
+@handle_api_errors
+@require_bank_role(BANK_ADMIN_ROLE)
+def download_kyc_document(**kwargs):
+	"""
+	Streams the bank's stored KYC document back to the caller.
+
+	This is the only read path for the document. It is stored privately, and
+	/private/files/... sits outside the /v1 namespace the JWT middleware covers, so
+	a Bearer-token client hitting that path directly is treated as Guest and refused.
+	"""
+	user = frappe.session.user
+	bank = frappe.db.get_value(
+		"User Permission", {"user": user, "allow": "A2C Participating Bank"}, "for_value"
+	)
+
+	if not bank:
+		frappe.throw(_("No bank associated with the current user."))
+
+	frappe.has_permission("A2C Participating Bank", "read", doc=bank, throw=True)
+
+	file_url = frappe.db.get_value("A2C Participating Bank", bank, "kyc_document")
+	if not file_url:
+		frappe.throw(_("No KYC document has been uploaded for this bank."), frappe.DoesNotExistError)
+
+	# Resolve via the attachment link rather than file_url alone: that confirms the file
+	# is the one attached to *this* bank, so a stale or swapped kyc_document value cannot
+	# be used to read another bank's document.
+	file_name = frappe.db.get_value(
+		"File",
+		{
+			"file_url": file_url,
+			"attached_to_doctype": "A2C Participating Bank",
+			"attached_to_name": bank,
+		},
+		"name",
+	)
+	if not file_name:
+		frappe.throw(_("KYC document not found."), frappe.DoesNotExistError)
+
+	file_doc = frappe.get_doc("File", file_name)
+
+	frappe.local.response.filename = file_doc.file_name
+	frappe.local.response.filecontent = file_doc.get_content()
+	frappe.local.response.type = "download"
+	if kwargs.get("view"):
+		frappe.local.response.display_content_as = "inline"
+
+
+# -----------------
 # 3d. upload_image
 # -----------------
-@bank_route("/me/logo", methods=("POST",), summary="Upload bank logo")
-@frappe.whitelist()
+@api_route("/images", methods=("POST",), summary="Upload an image")
 @handle_api_errors
 @validate_request(UploadImageSchema)
 def upload_image(**kwargs):
+	"""Store a public image and return its URL. Attaching it to a record is the
+	caller's next step (bank logo via update_bank_profile, avatar via update_profile).
+
+	Deliberately has no @require_bank_role, unlike its neighbours in this module:
+	farmers and development agents upload avatars through it too. It only creates an
+	unattached public File, so authentication is the appropriate bar.
+	"""
 	user = frappe.session.user
 	if user == "Guest":
 		frappe.throw(_("Authentication required"), frappe.AuthenticationError)
+
+	# Store the logo under a random, unguessable name instead of the caller's filename.
+	# /files/ is served straight off nginx with no permission check, so a predictable
+	# name (/files/cbo-logo.png) lets anyone enumerate the branding of banks that have
+	# not launched yet. UploadImageSchema already constrains the extension to
+	# png/jpg/jpeg/webp and sniffs the magic bytes, so the suffix is safe to carry over.
+	extension = kwargs.get("filename", "").rsplit(".", 1)[-1].lower()
+	stored_filename = "{0}.{1}".format(frappe.generate_hash(length=32), extension)
 
 	try:
 		file_doc = frappe.get_doc(
 			{
 				"doctype": "File",
-				"file_name": kwargs.get("filename"),
+				"file_name": stored_filename,
 				"content": kwargs.get("filedata"),
 				"decode": 1,
 				"is_private": 0,
@@ -415,7 +486,6 @@ def upload_image(**kwargs):
 # 3c. get_bank_profile
 # -----------------
 @bank_route("/me", methods=("GET",), summary="Get bank profile")
-@frappe.whitelist()
 @handle_api_errors
 def get_bank_profile():
 	user = frappe.session.user
@@ -484,7 +554,6 @@ def _bank_owned_file(file_url: str | None, bank: str) -> str | None:
 # 3c-2. update_bank_profile
 # -----------------
 @bank_route("/me", methods=("PATCH",), summary="Update bank profile")
-@frappe.whitelist()
 @validate_request(UpdateBankProfileSchema)
 @handle_api_errors
 def update_bank_profile(**kwargs):
@@ -540,7 +609,6 @@ def update_bank_profile(**kwargs):
 # 4. update_bank_status
 # -----------------
 @bank_route("/me/status", methods=("PATCH",), summary="Update bank status")
-@frappe.whitelist()
 @handle_api_errors
 @validate_request(UpdateBankStatusSchema)
 def update_bank_status(**kwargs):
@@ -594,7 +662,6 @@ def update_bank_status(**kwargs):
 # 5. invite_team_member
 # -----------------
 @bank_route("/me/team", methods=("POST",), summary="Invite team member")
-@frappe.whitelist()
 @validate_request(InviteTeamMemberSchema)
 @handle_api_errors
 @require_bank_role(BANK_ADMIN_ROLE)
@@ -674,7 +741,6 @@ def invite_team_member(email: str, full_name: str, password: str, role: str = BA
 # 6. list_users
 # -----------------
 @bank_route("/me/team", methods=("GET",), summary="List team members")
-@frappe.whitelist()
 @handle_api_errors
 @require_bank_role(BANK_ADMIN_ROLE)
 def list_users():
@@ -785,7 +851,6 @@ def _assert_can_manage_member(email: str) -> tuple[int, bool, bool]:
 
 
 @bank_route("/me/team/<user_id>", methods=("PATCH",), summary="Update team member")
-@frappe.whitelist()
 @validate_request(UpdateUserSchema)
 @handle_api_errors
 def update_user(
@@ -827,7 +892,6 @@ def update_user(
 # 8. reset_member_password
 # -----------------
 @bank_route("/me/team/<user_id>/password-reset", methods=("POST",), summary="Reset member password")
-@frappe.whitelist()
 @validate_request(ResetMemberPasswordSchema)
 @handle_api_errors
 @require_bank_role(BANK_ADMIN_ROLE)

@@ -399,6 +399,8 @@ graph TD
 ```
 
 > **Note on the logo:** Step 11 only stores the file and returns its `file_url`. Nothing is attached to the bank record until that URL is passed as the `logo` field in Step 14.
+>
+> The returned `file_url` does **not** preserve the filename you uploaded — the file is stored under a random 32-character name with the original extension. `/files/` is served without a permission check, so a predictable name would let anyone fetch the branding of a bank that has not launched yet. Always persist the `file_url` the API returns rather than constructing one from `{{filename}}`.
 
 ### Step 9: Register Bank Entity
 
@@ -543,7 +545,7 @@ Uploads a public image file (PNG, JPEG, or WebP) for use as the bank's marketpla
   "message": "Image uploaded successfully.",
   "data": {
     "message": "Image uploaded successfully.",
-    "file_url": "/files/bank_logo.png"
+    "file_url": "/files/8f21c0b4e95d47a3bd6178e2c0f4a91d.png"
   }
 }
 ```
@@ -3818,7 +3820,7 @@ Fetches farmer identity summary and recent loan applications for rendering the b
 
 ## Master Directory: Complete OAN A2C Marketplace API Endpoints
 
-The complete catalog of all 94 marketplace API endpoints across all platform functional modules and access roles.
+The complete catalog of all 95 marketplace API endpoints across all platform functional modules and access roles.
 
 | Functional Area       | HTTP Method | Method / Endpoint Path                                                          | Minimum Role Required       | Description                               |
 | :-------------------- | :---------- | :------------------------------------------------------------------------------ | :-------------------------- | :---------------------------------------- |

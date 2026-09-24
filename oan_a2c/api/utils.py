@@ -47,7 +47,7 @@ def validate_password_complexity(value: str) -> str:
 
 
 def validate_request(schema: type[BaseModel]):
-	"""Decorator to validate whitelisted API inputs using a Pydantic schema.
+	"""Decorator to validate API inputs using a Pydantic schema.
 
 	Parses, casts types, and validates the inputs.
 	Returns a standardized error response if validation fails.

@@ -121,6 +121,18 @@ def create_endpoint_wrapper(
 
 	@wraps(fn)
 	def endpoint(**path_args):
+		if "oan_a2c" not in frappe.get_installed_apps():
+			raise NotFound()
+
+		# These rules dispatch through frappe.call, which does not apply the
+		# @frappe.whitelist guest gate -- so allow_guest has to be enforced here
+		# or it is only bookkeeping. For JWT routes the middleware has already
+		# rejected anonymous callers; this is the backstop for the routes it
+		# deliberately exempts (gateway-authenticated webhooks), where the only
+		# thing standing between Guest and the controller is this check.
+		if not allow_guest and frappe.session.user == "Guest":
+			raise frappe.AuthenticationError(frappe._("Authentication required"))
+
 		params = expand_path_param_aliases(path_args)
 		params.update(frappe.form_dict)
 		# frappe.call forwards every kwarg verbatim to a target taking **kwargs, which
@@ -165,8 +177,8 @@ def rest(
 	"""Expose `fn` at `path`, and return `fn` unchanged.
 
 	The wrapper is registered as the rule's endpoint; the module-level name stays
-	bound to the original function, so the RPC surface (`@frappe.whitelist`) and
-	any direct caller are unaffected by the function also being routed.
+	bound to the original function, so any direct caller or test is unaffected by
+	the function also being routed.
 
 	Exceptions are deliberately not caught. Endpoints carry `@handle_api_errors`,
 	which turns them into envelopes already, and anything escaping that is better
@@ -265,10 +277,24 @@ def _register_spec_routes():
 		"/v1/auth/password/forgot",
 		"/v1/auth/password/reset",
 		"/v1/auth/password/initial",
+	):
+		guest_paths.add(g_path)
+
+	# Gateway-authenticated paths: not guest, but not JWT either.
+	#
+	# Kong rewrites the Authorization header on these routes to a Frappe API
+	# key/secret for a dedicated service user, which Frappe validates natively
+	# in validate_auth_via_api_keys() before auth_hooks run. So they must be
+	# exempt from the JWT middleware (it would reject a non-Bearer header)
+	# while still being closed to guests -- otherwise the credential enforces
+	# nothing and an anonymous caller that reaches the origin directly is
+	# accepted. The two gates want opposite answers here.
+	for gw_path in (
 		"/v1/webhooks/consent-data",
 		"/v1/webhooks/leads",
 	):
-		guest_paths.add(g_path)
+		_exempt_paths.add(gw_path)
+		_exempt_paths.add(f"/api{gw_path}")
 
 	for method, path, endpoint_str in routes:
 		try:
@@ -313,6 +339,9 @@ def ensure_routes_registered() -> None:
 		return
 
 	import frappe.api
+
+	if "oan_a2c" not in frappe.get_installed_apps():
+		return
 
 	_register_spec_routes()
 
@@ -447,6 +476,7 @@ _FALLBACK_ROUTES = [
 	("PATCH", "/v1/me/password", "oan_a2c.api.auth.change_password"),
 	("GET", "/v1/me", "oan_a2c.api.auth.get_me"),
 	("GET", "/v1/me/profile", "oan_a2c.api.auth.get_user_profile"),
+	("POST", "/v1/images", "oan_a2c.api.v1.seller.onboarding.upload_image"),
 	("PATCH", "/v1/me/profile", "oan_a2c.api.auth.update_profile"),
 	# Domain 02: Bank Onboarding & Administration
 	("POST", "/v1/banks", "oan_a2c.api.v1.seller.onboarding.register_bank"),
@@ -454,7 +484,7 @@ _FALLBACK_ROUTES = [
 	("PATCH", "/v1/banks/me", "oan_a2c.api.v1.seller.onboarding.update_bank_profile"),
 	("PATCH", "/v1/banks/me/status", "oan_a2c.api.v1.seller.onboarding.update_bank_status"),
 	("POST", "/v1/banks/me/kyc-documents", "oan_a2c.api.v1.seller.onboarding.upload_kyc_document"),
-	("POST", "/v1/banks/me/logo", "oan_a2c.api.v1.seller.onboarding.upload_image"),
+	("GET", "/v1/banks/me/kyc-documents", "oan_a2c.api.v1.seller.onboarding.download_kyc_document"),
 	("PUT", "/v1/banks/me/contacts", "oan_a2c.api.v1.seller.onboarding.save_org_contacts"),
 	("GET", "/v1/banks/me/team", "oan_a2c.api.v1.seller.onboarding.list_users"),
 	("POST", "/v1/banks/me/team", "oan_a2c.api.v1.seller.onboarding.invite_team_member"),
@@ -531,6 +561,7 @@ _FALLBACK_ROUTES = [
 		"oan_a2c.api.v1.loan_applications.update_basic_profile",
 	),
 	("PATCH", "/v1/loan-applications/{id}/status", "oan_a2c.api.v1.loan_applications.update_loan_status"),
+	("PATCH", "/v1/loan-applications/{id}/officer", "oan_a2c.api.v1.loan_applications.assign_loan_officer"),
 	("PATCH", "/v1/loan-applications/{id}/step", "oan_a2c.api.v1.loan_applications.update_loan_step"),
 	(
 		"GET",

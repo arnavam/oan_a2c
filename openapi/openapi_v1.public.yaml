@@ -1,5 +1,5 @@
 # A2C API -- OpenAPI 3.0.3 (PUBLIC / partner-facing contract)
-# Same 94 routes and schemas as openapi_v1.yaml, with internal-only vendor extensions
+# Same 95 routes and schemas as openapi_v1.yaml, with internal-only vendor extensions
 # (x-legacy-rpc-method, x-schema-confidence) removed. Generated from generate_openapi_spec.py.
 openapi: 3.0.3
 info:
@@ -8,7 +8,13 @@ info:
   description: 'REST API for the OpenAgriNet Access to Credit platform, covering bank onboarding, loan
     product cataloging, the farmer-facing marketplace, loan underwriting, Fayda national ID consent capture,
     and platform notifications.
-    
+
+
+    This document supersedes the team''s original RPC-bridge specification (`POST /api/method/<dotted.path>`
+    for every operation). Routes, verbs, and per-operation response schemas here reflect the REST facade
+    design in `A2C_API_REST_Routing_Map.md`.
+
+
     Response schemas are typed per operation from the platform''s documented request/response examples;
     a small number of endpoints without a documented example carry a schema inferred from the corresponding
     request shape -- see each schema''s own `description` field for a note where that applies.'
@@ -19,9 +25,9 @@ info:
     name: Apache 2.0
     url: https://www.apache.org/licenses/LICENSE-2.0.html
 servers:
-- url: https://api.a2c.oanstaging.com
+- url: https://api.a2c.openagrinet.org
   description: Production
-- url: https://api.staging.a2c.oanstaging.com
+- url: https://api.staging.a2c.openagrinet.org
   description: Staging
 tags:
 - name: Identity & Access
@@ -629,12 +635,47 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/UploadKycRequest'
-  /v1/banks/me/logo:
-    post:
-      summary: Upload the bank's logo
+    get:
+      summary: Download the bank's KYC document
       tags:
       - Bank Onboarding & Administration
-      operationId: post_v1_banks_me_logo
+      operationId: get_v1_banks_me_kyc-documents
+      parameters:
+      - name: view
+        in: query
+        required: false
+        schema:
+          type: integer
+          nullable: true
+        description: 1 to render inline; omit to download.
+      responses:
+        '200':
+          description: The raw file content.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/400ValidationError'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '403':
+          $ref: '#/components/responses/403Forbidden'
+        '404':
+          $ref: '#/components/responses/404NotFound'
+        '429':
+          $ref: '#/components/responses/429RateLimited'
+        '500':
+          $ref: '#/components/responses/500InternalError'
+      security:
+      - BearerAuth: []
+  /v1/images:
+    post:
+      summary: Upload an image (bank logo or user avatar)
+      tags:
+      - Bank Onboarding & Administration
+      operationId: post_v1_images
       responses:
         '200':
           description: Successful operation.
@@ -6775,8 +6816,8 @@ components:
           title: Id
           type: integer
         farmer_id:
-          type: string
           nullable: true
+          type: string
         name:
           type: string
           nullable: true

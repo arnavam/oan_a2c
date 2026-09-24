@@ -103,6 +103,9 @@ def validate_jwt_request(request=None):
 	Middleware bound to Frappe's auth_hooks.
 	Intercepts and validates JWTs for the oan_a2c API namespace.
 	"""
+	if "oan_a2c" not in frappe.get_installed_apps():
+		return
+
 	request = request or getattr(frappe.local, "request", None)
 	if request is None:
 		return
