@@ -29,23 +29,44 @@ kubectl -n "${NS}" create secret generic oan-frappe-common-db \
   --from-literal=password="$(kubectl -n frappe-common get secret oan-frappe-common-db -o jsonpath='{.data.password}' | base64 -d)" \
   --dry-run=client -o yaml | kubectl apply -f -
 
-# --atomic only once a revision has deployed: a failed or cancelled upgrade then rolls back to it.
-# Before that there is nothing to roll back to, and --atomic would uninstall the release, the
-# a2c-frappe PVC with the site's files included.
-ATOMIC=()
-if helm -n "${NS}" history a2c -o json 2>/dev/null | grep -q '"status":"deployed"'; then
-  ATOMIC=(--atomic)
-fi
+# The revision to roll back to when this upgrade fails or is cancelled: the one deployed now, if any.
+# Not --atomic: it rolls back before this script can print why the upgrade failed, and the rollback
+# deletes the failed jobs (their names carry a timestamp) with their pods and logs. Without a
+# deployed revision nothing is rolled back: a failed first install keeps the release, the a2c-frappe
+# PVC with the site's files included.
+DEPLOYED=$(helm -n "${NS}" history a2c -o json 2>/dev/null \
+  | python3 -c 'import json, sys; print(next((h["revision"] for h in json.load(sys.stdin) if h["status"] == "deployed"), ""))' \
+  || true)
+
+# A cancelled build sends SIGTERM: helm marks the upgrade failed and exits, and the script goes on to
+# print the reason and roll back instead of dying with it.
+trap 'echo "=== deploy cancelled ==="' TERM INT
+
 if ! helm upgrade --install a2c "${CHART_TGZ}" --namespace "${NS}" -f "${VALUES}" \
   --set frappe.image.tag="${IMMUTABLE_TAG}" \
   --set frappe.siteConfig.seed.image.tag="${IMMUTABLE_TAG}" \
-  ${ATOMIC[@]+"${ATOMIC[@]}"} \
   --wait --wait-for-jobs --timeout 30m; then
   echo "=== helm upgrade failed ==="
   helm -n "${NS}" history a2c --max 3 || true
   kubectl -n "${NS}" get jobs,pods || true
+  # Kubernetes keeps events for about an hour and logs only while the pod exists: print them, so the
+  # reason stays in the build log.
+  echo "=== warning events ==="
+  kubectl -n "${NS}" get events --field-selector type=Warning --sort-by=.lastTimestamp --no-headers \
+    -o custom-columns=TIME:.lastTimestamp,REASON:.reason,OBJECT:.involvedObject.name,MESSAGE:.message \
+    | grep -v FailedGetResourceMetric | tail -20 || true
+  for pod in $(kubectl -n "${NS}" get pods --no-headers \
+    -o custom-columns=NAME:.metadata.name,PHASE:.status.phase | awk '$2 != "Running" && $2 != "Succeeded" {print $1}'); do
+    echo "=== logs of ${pod} ==="
+    kubectl -n "${NS}" logs "${pod}" --all-containers --tail=40 || true
+  done
+  if [ -n "${DEPLOYED}" ]; then
+    echo "=== rolling back to revision ${DEPLOYED} ==="
+    helm -n "${NS}" rollback a2c "${DEPLOYED}" || true
+  fi
   exit 1
 fi
+trap - TERM INT
 
 helm -n "${NS}" status a2c
 kubectl -n "${NS}" get pods
