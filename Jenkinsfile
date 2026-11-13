@@ -71,6 +71,11 @@ pipeline {
             env.IMMUTABLE_TAG = sh(returnStdout: true, script: 'python3 ci/package_chart.py version').trim()
           }
           env.MOVING_TAG    = "${tagPrefix}-latest"
+          // Did this commit touch the spec, the routes or the gateway values? Not `changeset`: Jenkins lists no
+          // files for a merge commit, so it never matches one. Diff against the first parent instead; if that
+          // fails (shallow clone), assume yes, since the gateway install is idempotent.
+          def files = sh(returnStdout: true, script: 'git diff --name-only HEAD^1 HEAD || echo apisix/').trim().split('\n')
+          env.GATEWAY_CHANGED = files.any { it.startsWith('apisix/') || it.startsWith('openapi/') || it == 'helm/environments/dev/oan-a2c-gateway.yaml' } ? 'true' : 'false'
           echo "branch=${env.BRANCH_NAME}  repo=${env.ECR_REPO}  seed_repo=${env.ECR_SEED_REPO}  tag=${env.IMMUTABLE_TAG}"
         }
       }
@@ -190,11 +195,7 @@ pipeline {
         beforeAgent true
         allOf {
           branch 'develop'
-          anyOf {
-            changeset 'apisix/**'
-            changeset 'openapi/**'
-            changeset 'helm/environments/dev/oan-a2c-gateway.yaml'
-          }
+          expression { env.GATEWAY_CHANGED == 'true' }
         }
       }
       steps {
@@ -227,11 +228,7 @@ pipeline {
         beforeAgent true
         allOf {
           branch 'develop'
-          anyOf {
-            changeset 'apisix/**'
-            changeset 'openapi/**'
-            changeset 'helm/environments/dev/oan-a2c-gateway.yaml'
-          }
+          expression { env.GATEWAY_CHANGED == 'true' }
         }
       }
       agent { label 'oan-ci-deploy' }
@@ -429,11 +426,7 @@ SSHEOF
         beforeAgent true
         allOf {
           branch 'develop'
-          anyOf {
-            changeset 'apisix/**'
-            changeset 'openapi/**'
-            changeset 'helm/environments/dev/oan-a2c-gateway.yaml'
-          }
+          expression { env.GATEWAY_CHANGED == 'true' }
         }
       }
       steps {
